@@ -1,0 +1,105 @@
+name: research-cluster
+
+x-control-environment: &control-environment
+  CLUSTER_TOKEN: ${CLUSTER_TOKEN:?Set CLUSTER_TOKEN in .env}
+  CLUSTER_DATABASE_URL: postgresql+psycopg://research:${POSTGRES_PASSWORD:-research-local-development}@postgres:5432/research
+  CLUSTER_DATA_DIR: /data
+  CLUSTER_REPO_ROOT: /repos
+  CLUSTER_ORCHESTRATOR: temporal
+  CLUSTER_MAX_CONCURRENT_RESEARCH: ${CLUSTER_MAX_CONCURRENT_RESEARCH:-4}
+  TEMPORAL_ADDRESS: temporal:7233
+  LLM_MODEL: ${LLM_MODEL:-}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_BASE_URL: ${LLM_BASE_URL:-}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: research
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-research-local-development}
+      POSTGRES_DB: research
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U research -d research]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # Persistent local Temporal server. Replace its address with a production
+  # Temporal service when deploying beyond a development environment.
+  temporal:
+    image: temporalio/temporal:latest
+    command: [server, start-dev, --ip, 0.0.0.0, --db-filename, /data/temporal.db]
+    volumes: [temporal-data:/data]
+    ports: ["127.0.0.1:8233:8233"]
+    healthcheck:
+      test: [CMD, temporal, operator, cluster, health, --address, localhost:7233]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  api:
+    build: .
+    image: research-cluster:local
+    environment: *control-environment
+    volumes: [control-data:/data, "./repos:/repos:ro"]
+    ports: ["127.0.0.1:${CLUSTER_PORT:-8787}:8787"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import os,urllib.request; urllib.request.urlopen(urllib.request.Request('http://localhost:8787/api/health',headers={'Authorization':'Bearer '+os.environ['CLUSTER_TOKEN']}))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  orchestrator:
+    image: research-cluster:local
+    command: [orchestrator]
+    environment: *control-environment
+    volumes: [control-data:/data, "./repos:/repos:ro"]
+    depends_on:
+      api: {condition: service_healthy}
+      temporal: {condition: service_healthy}
+    restart: unless-stopped
+
+  cpu-worker:
+    image: research-cluster:local
+    command: [worker, --url, "http://api:8787", --kind, cpu, --pool, cpu-default,
+              --cpus, "2", --memory-mb, "1536", --concurrency, "2", --directory, /worker]
+    environment:
+      CLUSTER_TOKEN: ${CLUSTER_TOKEN:?Set CLUSTER_TOKEN in .env}
+    volumes: [cpu-data:/worker]
+    cpus: 2
+    mem_limit: 2g
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+
+  lean-worker:
+    profiles: [lean]
+    build:
+      context: .
+      dockerfile: Dockerfile.lean
+    image: research-cluster-lean:local
+    command: [worker, --url, "http://api:8787", --kind, cpu, --pool, lean-cpu,
+              --cpus, "1", --cpu-offset, "2", --memory-mb, "1024", --concurrency, "1", --directory, /worker]
+    environment:
+      CLUSTER_TOKEN: ${CLUSTER_TOKEN:?Set CLUSTER_TOKEN in .env}
+      CLUSTER_LEAN_HOME: /opt/lean
+    volumes: [lean-data:/worker]
+    cpus: 1
+    mem_limit: 1536m
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  temporal-data:
+  control-data:
+  cpu-data:
+  lean-data:

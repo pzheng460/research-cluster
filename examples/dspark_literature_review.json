@@ -1,0 +1,124 @@
+{
+  "research": {
+    "name": "DSpark：文献驱动的架构与执行协同优化",
+    "objective": "结合最新论文和现有实验，提出能改善 DSpark 端到端吞吐、延迟或显存效率的可检验任务；区分架构、训练目标、采样分布和执行实现的贡献。",
+    "mode": "literature",
+    "domain": "ml",
+    "query_terms": ["DSpark"],
+    "lookback_days": 90,
+    "paper_limit": 20,
+    "baseline_papers": ["2607.05147", "2610.23787", "2610.20175", "2610.10411", "2610.06011", "2608.02123", "2601.11580", "2608.03447", "2611.02846", "2611.00506", "2610.41177", "2610.05774"],
+    "repo_path": "/home/zhengpeizhen/SpecForge",
+    "context_paths": ["configs/qwen3-8b-dspark.json", "experiments/looped_dspark/bpad/research_status.json", "experiments/looped_dspark/qwen_scale/matched5epoch_8b_batch8/README.md"],
+    "known_context": "本地证据来自 experiments/looped_dspark/bpad/research_status.json：既有小型 AR decoder 在固定锚点接受率上有提升，但连续生成吞吐未显示明确收益。锁定的 AdditiveContextHistoryHead(order=3) 在 B1、128 个 prompt-only greedy 样本的原型测量中约有 1.83% 吞吐改善，95% CI 约 [1.02%,2.66%]；该结果不代表生产、高并发或跨模型收益。它只额外保存块内较早 token，不等于删除 backbone 的历史 KV。该组实验仅 4/8 数值审计输出与逐 token Target AR 相同，因此不能认证无损。曾用过的固定锚点缓存和已筛选样本不能再次充当新候选的确认集。现有 head 结果依赖自训三层、冻结 step307000 的 backbone；不能直接当作官方预训练 DSpark 结果。matched5epoch_8b_batch8/README.md 明确本地连续隐状态共享层 loop 并非 D-Loop 的离散前缀/后缀重拟稿。保留既有训练、检查点和资源交接状态。",
+    "kind": "gpu",
+    "pool_id": "gpu-default",
+    "resources": {"cpus": 2, "memory_mb": 16384, "gpus": 1},
+    "metric": "tokens_per_second",
+    "direction": "max",
+    "rounds": 3
+  },
+  "synthesis": {
+    "method": "assistant_reviewed",
+    "summary": "截至 2026-11-03 的本轮 arXiv 检索将近期修订与显式基线分开记录，检出了 11 月 2 日的 SpecOPD、10 月 31 日的 Weights That Stay 和 10 月 30 日的 TraceSpec。综合后的优先级是：先锁定数值与评测协议，再验证串行 head 的执行瓶颈，以及训练分布/目标与真实部署的对齐；随后评估历史 KV、树形候选和选择性重拟稿的交互。下列均为待验证任务，不宣称组合已具备论文新颖性，也不将任何论文报告的加速直接外推至本机 L20X。",
+    "tasks": [
+      {
+        "title": "DS-00：锁定数值路径与端到端评测基线",
+        "priority": "P0",
+        "hypothesis": "在固定 Target 数值路径、精度、数据与计算预算后，可以区分已有 context-history head 的真实吞吐收益和实现/工作负载造成的差异。",
+        "evidence_ids": ["2607.05147", "2601.11580", "2611.02846", "2610.41177"],
+        "rationale": "本地结果存在接受率与吞吐不一致、以及 AR 数值审计未全部相同的限制。近期工作也把执行路径和轨迹条件作为重要评测因素；后续架构比较需要共同的有效基线。",
+        "baseline": "同一个 Qwen3-8B Target、同一个冻结三层自训 backbone，对比 Markov 与锁定 history3 head。官方预训练/五层配置只作为独立外部参考，禁止混合统计。",
+        "experiments": [
+          "登记 checkpoint、代码提交、Target/词表精度、CUDA graph、预填充是否计时及 acceptance-length 定义。",
+          "建立未参与旧 head 训练、选择或筛选的新 prompt 分组；按任务与轨迹阶段分层，固定验证和最终确认集。",
+          "先做确定性/数值路径审计，再在显存允许的 B1/B8/B16 与短/长上下文上轮换测量模式顺序，显式记录 OOM。",
+          "分解 backbone、串行 head、Target verification、调度与数据搬运时间，并记录全部失败样本。"
+        ],
+        "metrics": ["tokens_per_second", "p95_inter_token_latency_ms", "mean_tokens_per_target_call", "draft_latency_ms", "peak_memory_mb", "greedy_reference_match_rate"],
+        "acceptance": [
+          "同一协议下的重复测量可复现，并提供 paired prompt bootstrap 区间。",
+          "未解决的数值不一致必须明确报告；不得把有限样本匹配率写成一般无损保证。",
+          "后续候选仅在该协议和新确认集上比较；若基线不稳定，先停止扩大训练规模。"
+        ],
+        "risks": ["已有缓存被用于多次筛选，不能视为新确认集。", "不同 batch shape 下的 BF16 数值差异可能改变 greedy 结果。"],
+        "budget": {"cpus": 4, "gpus": 1, "gpu_hours": 0.5, "note": "初始数值/计时 smoke 预估上限；大样本确认另行估算。"}
+      },
+      {
+        "title": "DS-01：面向 L20X 的驻留式 context-history 串行 head",
+        "priority": "P1",
+        "hypothesis": "将 history3 的小状态更新与词表投影跨步复用协同设计，可能在保持 head 决策不变的情况下，让已有接受率收益更充分地转化为端到端吞吐。",
+        "evidence_ids": ["2611.00506", "2607.05147"],
+        "rationale": "Weights That Stay 将跨步权重复用作为串行 head 的执行优化方向；本地已融合门控，但仍需实际 profile 判断词表投影和步间调度是否占主导。其 H100/B200 实现不能直接假定适用于 L20X。",
+        "baseline": "固定权重的 Markov 和 history3 head，分别使用当前 CUDA graph 实现；所有版本保持 Target、候选长度和选择策略一致。",
+        "experiments": [
+          "先核对 GPU 指令/同步能力与每 SM 资源，记录词表投影矩阵、寄存器、共享内存和 occupancy 的容量边界。",
+          "比较仅算子融合、部分权重驻留和受支持的持久执行方案；不支持的硬件路径显式回退。",
+          "逐步核对条件 logits、选中 token、history 状态和 EOS 行为；再测完整 draft walk 与端到端服务。",
+          "以 Markov/history3 × 当前/新执行路径的 2×2 对照，分离建模收益与实现收益。"
+        ],
+        "metrics": ["serial_head_latency_ms", "draft_latency_ms", "tokens_per_second", "peak_memory_mb", "token_match_rate"],
+        "acceptance": ["DS-00 协议有效后再进行性能确认。", "新路径未改变登记协议下的 head 决策；吞吐比的 95% 区间下界大于 1，且 p95 延迟和显存不超预算。", "若 head 已不是主要瓶颈，停止增加内核复杂度并保留负结果。"],
+        "risks": ["跨 CTA 同步和驻留容量可能限制 L20X 的实现。", "微基准收益可能被 Target verification 成本淹没。", "执行顺序改变可能引入数值差异。"],
+        "budget": {"cpus": 4, "gpus": 1, "gpu_hours": 1, "note": "先做单卡 head 微基准；不在该预算内启动全量训练。"}
+      },
+      {
+        "title": "DS-02：分支并行 on-policy 数据与跨轮目标的匹配实验",
+        "priority": "P1",
+        "hypothesis": "history3 head 的收益可能受训练历史分布和跨轮代价的共同约束；分离 SpecOPD 式分支数据采集与 EDR 目标的贡献，有望找到比继续增加 head 容量更有效的改进。",
+        "evidence_ids": ["2611.02846", "2610.10411", "2607.05147"],
+        "rationale": "两篇工作分别提供 on-policy 分支监督和跨轮优化的研究线索；它们的采样分布、条件历史与梯度假设不能直接视作相同。这里只提出可验证的对齐任务。",
+        "baseline": "固定 backbone、Markov/history3 head 结构和预测 token 预算；保留原生 CE+概率 L1+confidence 对照，并独立登记 on/off-policy 数据来源。",
+        "experiments": [
+          "先在 CPU 的小状态模型上推导并枚举验证各目标和采样估计；如需重要性修正，明确权重和适用条件。",
+          "以数据分布（现有/分支 on-policy）× 目标（原生/EDR）做 2×2 消融，禁止同时更换 backbone 或验证策略。",
+          "目标模型必须看到每条分支自己的已采样前缀；隔离分支 KV/状态，避免借用参考链条件分布冒充 on-policy 监督。",
+          "先运行冻结 backbone 的短 head pilot；在匹配预测 token 预算下比较，同时单列采集与训练 wall time。"
+        ],
+        "metrics": ["offline_expected_rounds", "mean_tokens_per_target_call", "tokens_per_second", "supervised_tokens_per_second", "collection_gpu_hours"],
+        "acceptance": ["若精确小模型上的梯度/目标不一致，停止声称无偏或等价，先修正推导。", "原生目标、单独数据改动、单独目标改动与组合均有可复现对照。", "新确认集端到端收益成立后才扩大 backbone 训练；接受率单独提高不足以通过。"],
+        "risks": ["分支采样和真实解码 occupancy 不同，可能需要额外估计。", "训练数据采集成本可能抵消部署收益。", "不能把作者报告的训练或接受率收益直接视作本地收益。"],
+        "budget": {"cpus": 4, "gpus": 1, "gpu_hours": 1.5, "note": "先完成 CPU 推导与极小模型检查，再分配短 pilot。"}
+      },
+      {
+        "title": "DS-03：按轨迹阶段选择 backbone 历史预算",
+        "priority": "P1",
+        "hypothesis": "根据 agent 轨迹阶段和上下文特征选择 history-free、短窗口或完整历史，可能比统一历史策略更好地平衡 draft 质量、KV 成本和吞吐。",
+        "evidence_ids": ["2610.23787", "2610.41177", "2607.05147"],
+        "rationale": "DLite 与 TraceSpec 提供历史成本和轨迹条件的不同视角；应在匹配的阶段内比较，避免从汇总上下文长度曲线推断所有请求都应删除历史。该任务改变的是 backbone KV，不等同于本地三 token head。",
+        "baseline": "完整历史、固定短窗口、history-free 三种静态策略；固定 head、候选长度、数据预算与数值实现。",
+        "experiments": ["建立 reasoning、tool-result 和 late-action 分层的固定前缀回放集，分离上下文长度与阶段。", "先独立训练/校准各静态历史策略，记录删除历史带来的质量损失和训练/推理失配。", "使用开发集学习小型路由器，再冻结其阈值；比较静态策略、路由器与有标记的 oracle 上界。", "将 KV 维护、切换与特征复用开销纳入连续生成计时。"],
+        "metrics": ["tokens_per_second", "p95_inter_token_latency_ms", "mean_tokens_per_target_call", "draft_kv_memory_mb", "routing_overhead_ms"],
+        "acceptance": ["报告每个阶段和长度桶的结果及混合权重。", "路由后的净收益需覆盖切换成本，且最差阶段无超出预登记容忍度的退化。", "若路由器不优于最佳静态策略，优先保留更简单的静态策略。"],
+        "risks": ["已有正结果仅限 B1 原型，不能外推长上下文 agent 服务。", "多种历史策略可能增加训练和服务复杂度。"],
+        "budget": {"cpus": 4, "gpus": 1, "gpu_hours": 1, "note": "预算用于分层回放与小样本静态消融；大规模路由训练另估。"}
+      },
+      {
+        "title": "DS-04：树形候选中的 parent-private history3 状态",
+        "priority": "P2",
+        "hypothesis": "在固定验证行预算下，为每条候选路径独立计算 history3 状态，可能比链式 history3 或仅 Markov 的 parent-conditioned tree 更有效地保留有价值的备选路径。",
+        "evidence_ids": ["2608.02123", "2610.20175", "2610.05774", "2611.02846"],
+        "rationale": "树形 DSpark 与自适应验证已存在；本任务仅检验本地 history3 状态与分支构造的交互，不把普通树化当作新贡献。需要保证不同 parent 的历史状态完全隔离。",
+        "baseline": "chain/tree × Markov/history3 的 2×2 对照；第一阶段冻结权重，固定 Target 验证节点数与候选展开策略。",
+        "experiments": ["实现显式 parent 索引和分支私有的三 token 状态，测试共享前缀、EOS、剪枝与打包后的重排。", "比较固定行预算下的接受 token、head 调用次数和完整服务开销。", "在固定结构下再考虑 TreeSpark 类训练/部署对齐损失，将监督改动与树构造改动分开。", "与已发表的自适应宽度策略做明确差异对照，检查候选收益是否只是更宽验证造成。"],
+        "metrics": ["tokens_per_second", "accepted_tokens_per_verify_row", "tree_build_latency_ms", "parent_state_mismatch_count", "peak_memory_mb"],
+        "acceptance": ["所有分支状态一致性测试通过，parent_state_mismatch_count 为 0。", "同等验证行预算下有端到端净收益；若只扩大行数或增加额外 backbone pass，不能归因于该 head。"],
+        "risks": ["词表投影与树构造开销可能抵消更长接受前缀。", "与既有树化和 adaptive scheduling 的创新边界仍需进一步查新。"],
+        "budget": {"cpus": 4, "gpus": 1, "gpu_hours": 1, "note": "先做路径正确性与冻结权重回放，不做全量树训练。"}
+      },
+      {
+        "title": "DS-05：有净收益才触发的前缀条件重拟稿",
+        "priority": "P2",
+        "hypothesis": "将请求难度、预测前缀存活与实测额外 draft 成本结合，只对部分请求触发第二次前缀条件重拟稿，可能形成优于固定一次或两次 pass 的延迟/吞吐前沿。",
+        "evidence_ids": ["2610.06011", "2610.05774", "2607.05147"],
+        "rationale": "这里研究的是额外 backbone pass 的触发决策，与已有自适应验证宽度不同。D-Loop 的离散前缀/后缀机制也不同于仓库现有连续隐状态 loop，不能混为同一基线。",
+        "baseline": "一次 DSpark、始终两次的前缀条件重拟稿、固定阈值触发、成本感知触发；独立保留本地 hidden-state loop 作为不同方法。",
+        "experiments": ["先复现明确的 prefix/suffix 条件路径，验证因果性和分支输出，而非仅重复一层网络。", "在开发集测量额外 pass、不同验证长度和 batch 的成本，构建净收益触发规则。", "冻结规则后，在新确认集与不同并发下比较 Pareto 曲线；记录触发率、失败类型与每 token 总开销。", "如继续学习触发器，使用独立训练数据和预登记预算，防止对确认集调阈值。"],
+        "metrics": ["tokens_per_second", "p95_inter_token_latency_ms", "extra_pass_rate", "draft_latency_ms", "mean_tokens_per_target_call"],
+        "acceptance": ["净收益包含被触发和未触发请求的全部成本。", "相对于一次和始终两次基线，至少一个预登记负载点有稳定收益且其余关键点不超过退化阈值。", "如果触发器只能靠 oracle 未来信息获益，停止该方向并报告负结果。"],
+        "risks": ["confidence 失校准会导致错误触发。", "额外 backbone pass 在高并发下可能挤占 Target 资源。"],
+        "budget": {"cpus": 4, "gpus": 1, "gpu_hours": 1, "note": "先评估冻结权重的触发上界；不自动扩展训练。"}
+      }
+    ]
+  }
+}

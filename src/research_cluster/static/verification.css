@@ -1,0 +1,24 @@
+.lean-config{padding:22px 28px;border-top:1px solid var(--line)}
+.lean-config .section-label{margin:0 0 18px}.lean-config h3{font-size:13px}
+.lean-config .form-note{margin:15px 0}.lean-config .form-row{margin-top:16px}
+.proof-intro{padding:24px;display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:24px}
+.proof-intro h2{font-size:15px}.proof-intro p{font-size:12px;line-height:1.9;color:#b7c6d8;margin:12px 0}
+.proof-intro small{color:var(--muted);font-size:10px;line-height:1.8}.proof-intro>button{flex-shrink:0}
+.proof-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.proof-card{padding:22px}.proof-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px}
+.proof-card h3{line-height:1.7}.proof-card p{font-size:11px;color:var(--muted);line-height:1.9;margin:15px 0;overflow-wrap:anywhere}
+.proof-card-meta{display:flex;gap:8px;flex-direction:column;font-size:10px;color:#8099af}
+.proof-card-actions{margin-top:18px;display:flex;gap:10px;flex-wrap:wrap}
+.proof-report{padding:24px 28px}.proof-report p{font-size:12px;line-height:1.9;color:var(--muted);margin:17px 0}
+.proof-report .config-row{align-items:flex-start;gap:20px}.proof-report .config-row b{font-size:10px;max-width:70%;overflow-wrap:anywhere;text-align:right}
+.proof-report h3{margin:24px 0 14px}.proof-target{padding:15px;background:#0e1722;border:1px solid var(--line);border-radius:6px;margin-bottom:10px;font-size:11px}
+.proof-target strong{margin-right:12px}.proof-target code{display:block;color:#8abcae;overflow-wrap:anywhere;margin:12px 0;font-size:10px}
+.proof-target small{color:var(--muted)}.proof-attempt{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line);font-size:10px;flex-wrap:wrap}
+.proof-attempt>span:nth-child(2){flex:1}.formal-assessment{padding:13px 0;border-top:1px solid var(--line);font-size:10px;color:var(--muted);line-height:1.8}
+.formal-assessment>div{display:flex;gap:10px;align-items:center}.formal-assessment strong{font-weight:400}
+.formal-assessment p{margin:9px 0 0;font-size:10px}.formal-assessment ul{padding-left:18px;margin:10px 0}
+.badge.passed{color:#8fe5bd;background:#17382a}.badge.unproved{color:#efbd7a;background:#342c22}
+.badge.repairing{color:#a3c8f6;background:#1c3049}.badge.unassessed,.badge.not_applicable{color:#8ea1b6;background:#263243}
+.badge.recommended,.badge.required,.badge.advisory{color:#adbbf3;background:#252c46}
+@media(max-width:1000px){.proof-list{grid-template-columns:1fr}.proof-intro{align-items:flex-start;flex-direction:column}}
+@media(max-width:650px){.lean-config,.proof-report{padding:20px}.proof-card,.proof-intro{padding:18px}.proof-card-meta{font-size:9px}.proof-card-head{gap:10px}.proof-report .config-row{gap:12px}.proof-report .config-row b{max-width:62%}.proof-target strong{display:block;margin-bottom:10px}}
